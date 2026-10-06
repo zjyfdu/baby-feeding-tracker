@@ -1,0 +1,19 @@
+# 一键部署（Render Blueprint）
+# 使用方法：打开 https://render.com/deploy?repo=https://github.com/zjyfdu/baby-feeding-tracker
+# 数据库推荐配合 Neon 免费档：https://neon.tech 注册后复制连接串，
+# 在创建页面的 DATABASE_URL 一栏粘贴即可。
+services:
+  - type: web
+    name: baby-feeding-tracker
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: API_PREFIX
+        value: /api
+      - key: DATABASE_URL
+        sync: false

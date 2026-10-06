@@ -1,0 +1,16 @@
+node_modules
+dist
+frontend/dist
+backend/dist
+.git
+.gitignore
+.env
+.env.*
+*.log
+.codebuddy
+.genie
+.templates
+docs
+.cloudstudio
+README.md
+DEPLOY.md

@@ -48,6 +48,11 @@ cd backend && pnpm build && cd ../frontend && pnpm build
 cd backend && PORT=3000 node dist/index.js
 ```
 
+## 部署
+
+- 有服务器：`docker compose up -d --build` 一条命令启动应用 + 数据库
+- 没有服务器：Render + Neon 免费托管，一键部署链接见 [DEPLOY.md](./DEPLOY.md)
+
 ## 数据说明
 
 - 所有记录存在你自己的 PostgreSQL 里，应用本身不上传任何数据到第三方
