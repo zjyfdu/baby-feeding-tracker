@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.sw?
+
+# Platform-specific workspace config (not part of the app)
+.cloudstudio/
+.codebuddy/
+.genie/
+.templates/
+docs/
+
+# Package manager noise
+package-lock.json
