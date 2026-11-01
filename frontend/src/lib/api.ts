@@ -1,7 +1,7 @@
-export type EventKind = 'feeding' | 'diaper'
+export type EventKind = 'feeding'
 
 export interface CareEvent {
-  id: number
+  id: string
   kind: EventKind
   /** Start time of the event. */
   event_at: string
@@ -18,7 +18,6 @@ export interface CareEvent {
 export interface CareOptions {
   types: string[]
   amounts: number[]
-  diaperStates: string[]
 }
 
 /** One row per calendar day (and kind) that has records. */
@@ -37,7 +36,7 @@ export interface Bootstrap {
   latest: Partial<Record<EventKind, string | null>>
 }
 
-const BASE = '/api'
+const BASE = '/functions/v1/app/api'
 
 /** Timezone of the device, so day boundaries match what the user sees. */
 export const localTz = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai'
@@ -85,7 +84,7 @@ export const api = {
       body: JSON.stringify(p),
     }),
   updateEvent: (
-    id: number,
+    id: string,
     patch: {
       event_at?: string
       type?: string
@@ -98,7 +97,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
     }),
-  deleteEvent: (id: number) => req<void>(`${BASE}/events/${id}`, { method: 'DELETE' }),
+  deleteEvent: (id: string) => req<void>(`${BASE}/events/${id}`, { method: 'DELETE' }),
   getOptions: () => req<CareOptions>(`${BASE}/options`),
   saveOptions: (o: CareOptions) =>
     req<CareOptions>(`${BASE}/options`, {

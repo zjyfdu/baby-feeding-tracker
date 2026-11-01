@@ -17,13 +17,12 @@ import CheckInSheet from './CheckInSheet'
 const DEFAULT_OPTIONS: CareOptions = {
   types: ['母乳', '奶粉'],
   amounts: [30, 60, 90, 120, 150, 180],
-  diaperStates: ['💩多', '💩少', '无💩'],
 }
 
 /** Days loaded in the first paint; older days are fetched when their tab is tapped. */
 const WINDOW_DAYS = 14
 
-const CACHE_KEY = 'baby-care-cache-v2'
+const CACHE_KEY = 'baby-care-cache-v3'
 
 interface Snapshot {
   options: CareOptions
@@ -192,7 +191,6 @@ export default function BabyTracker() {
   )
   const [now, setNow] = useState<number>(() => Date.now())
   const [loading, setLoading] = useState(() => !cached)
-  const [tab, setTab] = useState<EventKind>('feeding')
   const [selectedDate, setSelectedDate] = useState<string>(() =>
     dateKey(new Date().toISOString())
   )
@@ -201,13 +199,11 @@ export default function BabyTracker() {
     windowDays(dateKey(new Date().toISOString()))
   )
   const [dayLoading, setDayLoading] = useState(false)
-  const [checkinKind, setCheckinKind] = useState<EventKind>('feeding')
   const [editing, setEditing] = useState<CareEvent | null>(null)
   const [sheet, setSheet] = useState<'none' | 'checkin' | 'settings'>('none')
 
   const [editTypes, setEditTypes] = useState<string[]>([])
   const [editAmounts, setEditAmounts] = useState<string[]>([])
-  const [editStates, setEditStates] = useState<string[]>([])
   const [exporting, setExporting] = useState(false)
 
   const loadAll = useCallback(async (silent = false) => {
@@ -220,9 +216,6 @@ export default function BabyTracker() {
         const next: CareOptions = {
           types: data.options.types?.length ? data.options.types : DEFAULT_OPTIONS.types,
           amounts: data.options.amounts?.length ? data.options.amounts : DEFAULT_OPTIONS.amounts,
-          diaperStates: data.options.diaperStates?.length
-            ? data.options.diaperStates
-            : DEFAULT_OPTIONS.diaperStates,
         }
         const todayNow = dateKey(new Date().toISOString())
         setOptions(next)
@@ -262,18 +255,15 @@ export default function BabyTracker() {
     [options, dayCounts, latest]
   )
 
-  const kindEvents = useMemo(
-    () =>
-      events
-        .filter((e) => e.kind === tab)
-        .sort((a, b) => startTimeMs(b) - startTimeMs(a)),
-    [events, tab]
+  // All records, newest first (drives stats and "距上次")
+  const feedEvents = useMemo(
+    () => [...events].sort((a, b) => startTimeMs(b) - startTimeMs(a)),
+    [events]
   )
   const stats = useMemo(
-    () => computeStats(kindEvents, now, latest[tab] ?? null),
-    [kindEvents, now, latest, tab]
+    () => computeStats(feedEvents, now, latest.feeding ?? null),
+    [feedEvents, now, latest]
   )
-  const isFeeding = tab === 'feeding'
 
   const todayKey = dateKey(new Date(now).toISOString())
   const yesterdayKey = dateKey(new Date(now - 86400000).toISOString())
@@ -283,21 +273,20 @@ export default function BabyTracker() {
   const dateTabs = useMemo(() => {
     const counts = new Map<string, number>()
     for (const d of dayCounts) {
-      if (d.kind !== tab) continue
       counts.set(d.day, (counts.get(d.day) ?? 0) + d.count)
     }
     if (!counts.has(todayKey)) counts.set(todayKey, 0)
     return [...counts.entries()]
       .sort((a, b) => (a[0] < b[0] ? 1 : -1))
       .map(([key, count]) => ({ key, count }))
-  }, [dayCounts, tab, todayKey])
+  }, [dayCounts, todayKey])
 
   // Fall back to today when the selected day no longer exists for this tab
   const activeDate = dateTabs.some((d) => d.key === selectedDate) ? selectedDate : todayKey
 
   const visible = useMemo(
-    () => kindEvents.filter((e) => dateKey(e.event_at) === activeDate),
-    [kindEvents, activeDate]
+    () => feedEvents.filter((e) => dateKey(e.event_at) === activeDate),
+    [feedEvents, activeDate]
   )
 
   // Tap a day outside the loaded window: fetch just that day's records.
@@ -328,14 +317,12 @@ export default function BabyTracker() {
     return `${Number(m)}月${Number(d)}日`
   }
 
-  const openCheckin = (kind: EventKind) => {
+  const openCheckin = () => {
     setEditing(null)
-    setCheckinKind(kind)
     setSheet('checkin')
   }
 
   const openEdit = (event: CareEvent) => {
-    setCheckinKind(event.kind)
     setEditing(event)
     setSheet('checkin')
   }
@@ -343,51 +330,77 @@ export default function BabyTracker() {
   const openSettings = () => {
     setEditTypes(options.types)
     setEditAmounts(options.amounts.map(String))
-    setEditStates(options.diaperStates)
     setSheet('settings')
   }
 
   const close = () => setSheet('none')
 
   const handleSaved = (saved: CareEvent, isEdit: boolean) => {
-    setEvents((prev) => {
-      const next = isEdit
-        ? prev.map((e) => (e.id === saved.id ? saved : e))
-        : [saved, ...prev]
-      cache(next)
-      return next
-    })
-    if (!isEdit) {
-      setTab(saved.kind)
-      setDayCounts((prev) => {
-        const key = dateKey(saved.event_at)
-        const hit = prev.find((d) => d.day === key && d.kind === saved.kind)
-        if (hit) {
-          return prev.map((d) => (d === hit ? { ...d, count: d.count + 1 } : d))
-        }
-        return [...prev, { day: key, kind: saved.kind, count: 1 }]
-      })
+    const next = isEdit
+      ? events.map((e) => (e.id === saved.id ? saved : e))
+      : [saved, ...events]
+    setEvents(next)
+
+    // Keep "距上次" honest: a new record or a moved newest record changes it.
+    const cur = latest[saved.kind]
+    const curMs = cur ? Date.parse(cur) : 0
+    const savedMs = startTimeMs(saved)
+    let nextLatest = latest
+    const old = isEdit ? events.find((e) => e.id === saved.id) : undefined
+    if (old && old.event_at === cur) {
+      const max = next
+        .filter((e) => e.kind === saved.kind)
+        .reduce((m, e) => Math.max(m, startTimeMs(e)), 0)
+      nextLatest = { ...latest, [saved.kind]: max ? new Date(max).toISOString() : null }
+    } else if (savedMs > curMs || (!isEdit && savedMs === curMs)) {
+      nextLatest = { ...latest, [saved.kind]: saved.event_at }
     }
+    if (nextLatest !== latest) setLatest(nextLatest)
+
+    let nextCounts = dayCounts
+    if (!isEdit) {
+      const key = dateKey(saved.event_at)
+      const hit = dayCounts.find((d) => d.day === key && d.kind === saved.kind)
+      nextCounts = hit
+        ? dayCounts.map((d) => (d === hit ? { ...d, count: d.count + 1 } : d))
+        : [...dayCounts, { day: key, kind: saved.kind, count: 1 }]
+      setDayCounts(nextCounts)
+    }
+    cache(next, options, nextCounts, nextLatest)
+
     // Jump to the day the record belongs to so it is immediately visible
     setSelectedDate(dateKey(saved.event_at))
   }
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (id: string) => {
     const target = events.find((e) => e.id === id)
     try {
       await api.deleteEvent(id)
-      setEvents((prev) => {
-        const next = prev.filter((e) => e.id !== id)
-        cache(next)
-        return next
-      })
+      const next = events.filter((e) => e.id !== id)
+      setEvents(next)
       if (target) {
         const key = dateKey(target.event_at)
-        setDayCounts((prev) =>
-          prev
-            .map((d) => (d.day === key && d.kind === target.kind ? { ...d, count: d.count - 1 } : d))
-            .filter((d) => d.count > 0)
-        )
+        const nextCounts = dayCounts
+          .map((d) =>
+            d.day === key && d.kind === target.kind ? { ...d, count: d.count - 1 } : d
+          )
+          .filter((d) => d.count > 0)
+        setDayCounts(nextCounts)
+        if (target.event_at === latest[target.kind]) {
+          const max = next
+            .filter((e) => e.kind === target.kind)
+            .reduce((m, e) => Math.max(m, startTimeMs(e)), 0)
+          const nextLatest = {
+            ...latest,
+            [target.kind]: max ? new Date(max).toISOString() : null,
+          }
+          setLatest(nextLatest)
+          cache(next, options, nextCounts, nextLatest)
+        } else {
+          cache(next, options, nextCounts)
+        }
+      } else {
+        cache(next)
       }
       toast.success('已删除')
     } catch (e) {
@@ -421,14 +434,9 @@ export default function BabyTracker() {
     const next: CareOptions = {
       types: editTypes.map((t) => t.trim()).filter(Boolean),
       amounts: editAmounts.map((a) => a.trim()).filter(Boolean).map(Number),
-      diaperStates: editStates.map((s) => s.trim()).filter(Boolean),
     }
     if (next.types.length === 0) {
       toast.error('至少保留一个喂养类型')
-      return
-    }
-    if (next.diaperStates.length === 0) {
-      toast.error('至少保留一个尿不湿状态')
       return
     }
     try {
@@ -449,7 +457,7 @@ export default function BabyTracker() {
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-xl font-bold text-rose-700">🥜 吃奶了吗</h1>
-              <p className="mt-0.5 text-xs text-slate-500">吃奶 · 尿不湿，一眼掌握</p>
+              <p className="mt-0.5 text-xs text-slate-500">记录每一顿奶</p>
             </div>
             <button
               onClick={openSettings}
@@ -462,54 +470,22 @@ export default function BabyTracker() {
         </header>
 
         <main className="flex-1 space-y-4 overflow-y-auto px-4 pb-32">
-          <div className="flex rounded-2xl bg-white/80 p-1 shadow-sm">
-            {(['feeding', 'diaper'] as EventKind[]).map((k) => (
-              <button
-                key={k}
-                onClick={() => setTab(k)}
-                className={`flex-1 rounded-xl py-2 text-sm font-semibold transition ${
-                  tab === k
-                    ? k === 'feeding'
-                      ? 'bg-rose-500 text-white shadow-sm'
-                      : 'bg-sky-500 text-white shadow-sm'
-                    : 'text-slate-500'
-                }`}
-              >
-                {k === 'feeding' ? '🍼 吃奶' : '🧷 尿不湿'}
-              </button>
-            ))}
-          </div>
-
           <section className="rounded-3xl bg-white/85 p-5 shadow-sm backdrop-blur">
             <div className="text-center">
-              <p className="text-xs text-slate-500">
-                {isFeeding ? '距离上次吃奶' : '距离上次换尿不湿'}
-              </p>
-              <p
-                className={`mt-1 text-4xl font-extrabold ${
-                  isFeeding ? 'text-rose-600' : 'text-sky-600'
-                }`}
-              >
+              <p className="text-xs text-slate-500">距离上次吃奶</p>
+              <p className="mt-1 text-4xl font-extrabold text-rose-600">
                 {stats.sinceLast == null ? '—' : diffText(stats.sinceLast)}
               </p>
             </div>
             <div className="mt-4 grid grid-cols-3 gap-3">
-              <Stat
-                label={isFeeding ? '今天已吃' : '今天已换'}
-                value={`${stats.todayCount} ${isFeeding ? '顿' : '次'}`}
-              />
+              <Stat label="今天已吃" value={`${stats.todayCount} 顿`} />
               <Stat label="平均间隔" value={stats.avg == null ? '—' : diffText(stats.avg)} />
-              <Stat
-                label="昨日同期"
-                value={`${stats.yestCount} ${isFeeding ? '顿' : '次'}`}
-              />
+              <Stat label="昨日同期" value={`${stats.yestCount} 顿`} />
             </div>
           </section>
 
           <section>
-            <h2 className="mb-2 px-1 text-sm font-semibold text-slate-600">
-              {isFeeding ? '吃奶记录' : '尿不湿记录'}
-            </h2>
+            <h2 className="mb-2 px-1 text-sm font-semibold text-slate-600">吃奶记录</h2>
 
             {!loading && dateTabs.length > 0 && (
               <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
@@ -534,16 +510,14 @@ export default function BabyTracker() {
             ) : visible.length === 0 ? (
               <div className="rounded-2xl bg-white/70 px-4 py-8 text-center text-sm text-slate-400">
                 {activeDate === todayKey
-                  ? isFeeding
-                    ? '今天还没有吃奶记录，点下方按钮打第一次卡吧 👇'
-                    : '今天还没有记录，换完尿不湿点下方按钮记一笔 👇'
+                  ? '今天还没有吃奶记录，点下方按钮打第一次卡吧 👇'
                   : `${dateLabel(activeDate)}没有记录`}
               </div>
             ) : (
               <ul className="space-y-2">
                 {visible.map((e) => {
-                  const idx = kindEvents.findIndex((x) => x.id === e.id)
-                  const prev = idx >= 0 ? kindEvents[idx + 1] : undefined
+                  const idx = feedEvents.findIndex((x) => x.id === e.id)
+                  const prev = idx >= 0 ? feedEvents[idx + 1] : undefined
                   const gap = prev ? startTimeMs(e) - startTimeMs(prev) : null
                   return (
                   <li
@@ -592,26 +566,19 @@ export default function BabyTracker() {
         </main>
 
         <div className="fixed inset-x-0 bottom-0 z-30">
-          <div className="mx-auto flex max-w-md gap-3 p-4">
+          <div className="mx-auto flex max-w-md p-4">
             <button
-              onClick={() => openCheckin('feeding')}
+              onClick={openCheckin}
               className="flex flex-1 items-center justify-center gap-1.5 rounded-2xl bg-rose-500 py-3.5 font-bold text-white shadow-lg shadow-rose-500/30 active:scale-[0.98]"
             >
               <Plus size={20} /> 吃奶打卡
-            </button>
-            <button
-              onClick={() => openCheckin('diaper')}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-2xl bg-sky-500 py-3.5 font-bold text-white shadow-lg shadow-sky-500/30 active:scale-[0.98]"
-            >
-              <Plus size={20} /> 尿不湿打卡
             </button>
           </div>
         </div>
 
         {sheet === 'checkin' && (
           <CheckInSheet
-            key={editing ? `edit-${editing.id}` : `new-${checkinKind}`}
-            kind={checkinKind}
+            key={editing ? `edit-${editing.id}` : 'new'}
             options={options}
             event={editing}
             onClose={close}
@@ -649,13 +616,6 @@ export default function BabyTracker() {
                 placeholder="新增毫升，如 200"
                 numeric
                 tone="amber"
-              />
-              <TagEditor
-                label="尿不湿状态"
-                values={editStates}
-                onChange={setEditStates}
-                placeholder="新增状态，如 有点红"
-                tone="sky"
               />
 
               <button

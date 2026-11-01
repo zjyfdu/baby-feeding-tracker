@@ -1,8 +1,7 @@
 import path from "path"
 import tailwindcss from "@tailwindcss/vite"
 import react from "@vitejs/plugin-react-swc"
-import {defineConfig} from "vite"
-import process from "process"
+import { defineConfig } from "vite"
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -13,20 +12,13 @@ export default defineConfig({
     },
   },
   server: {
-    host: '::',
+    host: '127.0.0.1',
     port: 5173,
-    allowedHosts: true,
-    cors: true,
-    hmr: {
-        protocol: 'wss',
-        host: `5173-${process.env.X_IDE_SPACE_KEY}.e2b.${process.env.X_IDE_SPACE_REGION}.${process.env.X_IDE_SPACE_HOST}`
-    },
+    strictPort: true,
     proxy: {
-      '/api': {
-        target: 'http://localhost:3000',
+      '/functions/v1/app': {
+        target: 'http://127.0.0.1:8000',
         changeOrigin: true,
-        secure: false,
-        ws: true
       },
     },
   },
